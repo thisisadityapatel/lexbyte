@@ -1,0 +1,301 @@
+options 
+{
+  // Nothing to do here for Part #1
+  IGNORE_CASE=false;
+}
+
+PARSER_BEGIN(VNM)
+public class VNM 
+{
+  // Nothing to do here for Part #1
+}
+PARSER_END(VNM)
+
+TOKEN_MGR_DECLS : 
+{
+  // Nothing to do here for Part #1
+}
+
+// Characters/strings to be skipped 
+// (they don't contribute to a token)
+SKIP : 
+{
+  " "     
+| "\t"    
+| "\n"    
+| "\r" 
+}
+
+
+// Special tokens are saved, but not sent to the parser
+// Comments go here since they need to be removed but not skipped
+SPECIAL_TOKEN:
+{
+  < COMMENT: "//" (~["\n","\r"])* ("\n"|"\r"|"\r\n")? >
+}
+
+
+// Tokens where case matters can be defined here
+TOKEN : 
+{
+  < LESS: "<"   >
+| < LE: "<=" >
+| < GREAT: ">" >
+| < GE: ">=" >
+| < EQ: "==" >
+| < NEQ: "!=" >
+| < IN: "=in" >
+| < NOTIN: "!in" >
+
+  // Arithematic
+| < PLUS: "+" >
+| < MINUS: "-" >
+| < PROD: "*" >
+| < DIV: "/" >
+
+  // Logical
+| < AND: "&" >
+| < OR: "|" >
+| < NOT: "!" >
+
+  // Assignment
+| < ASSGN: ":=" >
+
+  // Delimiters
+| < LRND: "(" >
+| < RRND: ")" >
+| < LSQU: "[" >
+| < RSQU: "]" >
+| < COMMA: "," >
+| < SCOL: ";" >
+
+  // Boolean literals
+| < TRUE: "#1" >
+| < FALSE: "#0" >
+
+  // Range operator
+| < RANGE: ".." >
+}
+
+// Tokens where case doesn't matter can be defined here
+TOKEN [IGNORE_CASE]:
+{
+  < DO:"DO">
+| < WHILE:"WHILE">
+| < FOR: "FOR">
+| < IF: "IF">
+| < THEN: "THEN">
+| < ELIF: "ELIF">
+| < ELSE: "ELSE">
+| < FI: "FI">
+| < FUNCTION: "FUNCTION">
+| < RETURN: "RETURN">
+| < END: "END">
+| < PRINT: "PRINT">
+| < PRINTLN: "PRINTLN">
+| < VAR: "VAR">
+}
+
+TOKEN : 
+{
+ // Using regular expressions to define a number token
+ // You can do similar for identifiers and strings
+
+  < #DIGIT:	["0"-"9"]>
+| < #LETTER: ["a"-"z","A"-"Z"] >
+| < #ALPHANUMERIC: (<LETTER>|<DIGIT>) >
+
+ // Number Token
+| < NUMBER:	(<DIGIT>)+ >  // A number is 1 or more digits
+
+ // Identifier tokens
+| < IDNUM: "#" <LETTER> (<ALPHANUMERIC>)* >
+| < IDBOOL: "?" <LETTER> (<ALPHANUMERIC>)* >
+| < IDVEC: "v_" (<ALPHANUMERIC>)+ >
+| < IDMAT: "M_" (<ALPHANUMERIC>)+ >
+
+ // String token - handles escape sequences
+| < STRING: "\"" (~["\"","\\","\n","\r"] | "\\" (~[]))* "\"" >
+}
+
+
+// Special tokens are saved, but not sent to the parser
+// Hint: Perhaps comments should go here...?
+// Remove the comments below when you're ready
+//SPECIAL_TOKEN : 
+//{
+  
+//}
+   
+void start() throws ParseException :
+{}
+{
+    statement() <SCOL>
+|   <EOF> { throw new ParseException("End of File."); }
+}
+
+void statement() :
+{}
+{
+    LOOKAHEAD(2) assign_stat()
+|    var_decl()
+|   fn_decl()
+|   LOOKAHEAD(2) exp_start()
+|   return_stat()
+|   print_stat()
+|   println_stat()
+|   if_stat()
+|   for_stat()
+|   while_stat()
+}
+
+void exp_start() :
+{}
+{ expression() }
+
+void body() : 
+{} 
+{ ( statement() <SCOL> )* }
+
+void clause() : 
+{} 
+{ statement() <SCOL> ( statement() <SCOL> )* }
+
+void var_decl() :
+{}
+{ <VAR> ident_list() }
+
+void fn_decl() :
+{}
+{ <FUNCTION> identifier() <LRND> (ident_list())? <RRND> body() <END> }
+
+void ident_list() :
+{}
+{ identifier() (<COMMA> identifier())* }
+
+void fn_call() :
+{}
+{ identifier() <LRND> (exp_list())? <RRND> }
+
+void exp_list() :
+{}
+{ expression() (<COMMA> expression())* }
+
+void return_stat() :
+{}
+{ <RETURN> (LOOKAHEAD(2) expression() | LOOKAHEAD(2) condition()) }
+
+void print_stat() :
+{}
+{ <PRINT> print_list() }
+
+void println_stat() :
+{}
+{ <PRINTLN> (print_list())? }
+
+void print_list() :
+{}
+{ print_component() (<COMMA> print_component())* }
+
+void print_component() :
+{}
+{ LOOKAHEAD(2) expression() | LOOKAHEAD(2) <STRING> | <IDBOOL> }
+
+void assign_stat() :
+{}
+{
+    <IDNUM> <ASSGN> expression()
+|   <IDBOOL> <ASSGN> condition()
+|   <IDVEC> <ASSGN> vec_const()
+}
+
+void if_stat() :
+{}
+{ <IF> condition() <THEN> clause() elifs() (<ELSE> clause())? <FI> }
+
+void elifs() :
+{}
+{ (<ELIF> condition() <THEN> clause())* }
+
+void for_stat() :
+{}
+{ <FOR> <IDNUM> <IN> exp_list() <DO> body() <END> }
+
+void while_stat() :
+{}
+{ <WHILE> condition() <DO> body() <END> }
+
+void condition() :
+{}
+{ or_clause() }
+
+void or_clause() :
+{}
+{ and_clause() (<OR> and_clause())* }
+
+void and_clause() :
+{}
+{ not_clause() (<AND> not_clause())* }
+
+void not_clause() :
+{}
+{
+    <NOT> not_clause()
+|   LOOKAHEAD(2) <LRND> condition() <RRND>
+|   LOOKAHEAD(2) fn_call()
+|   LOOKAHEAD(2) comparison()
+|   boolean_character()
+}
+
+void comparison() :
+{}
+{ expression() comparator() expression() }
+
+void expression() :
+{}
+{ summation() }
+
+void summation() :
+{}
+{ product() ((<PLUS> | <MINUS>) product())* }
+
+void product() :
+{}
+{ suffix_term() ((<PROD> | <DIV>) suffix_term())* }
+
+void suffix_term() :
+{}
+{ (<PLUS> | <MINUS>) suffix_term() | term() }
+
+void term() :
+{}
+{ LOOKAHEAD(2) <LRND> expression() <RRND> | LOOKAHEAD(2) fn_call() | simple_term() }
+
+void simple_term() :
+{}
+{ <IDNUM> | <IDVEC> | <NUMBER> | vec_const() }
+
+void vec_const() :
+{}
+{ <LSQU> (exp_list())? <RSQU> }
+
+void comparator() :
+{}
+{
+    <LESS>
+|   <LE>
+|   <GREAT>
+|   <GE>
+|   <EQ>
+|   <NEQ>
+|   <IN>
+|   <NOTIN>
+}
+
+void identifier() :
+{}
+{ <IDNUM> | <IDBOOL> | <IDVEC> }
+
+void boolean_character() :
+{}
+{ <IDBOOL> | <TRUE> | <FALSE> }
