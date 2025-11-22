@@ -1,0 +1,324 @@
+options {
+  IGNORE_CASE=false;
+  MULTI=true;             // Generate separate AST classes
+  JJTREE_OUTPUT_DIRECTORY="AST";
+  VISITOR=true;           // Required for next assignment
+  // NODE_DEFAULT_VOID=true; // Removed this to be distinct from friend
+}
+
+PARSER_BEGIN(VNM)
+public class VNM {}
+PARSER_END(VNM)
+
+TOKEN_MGR_DECLS : {}
+
+SKIP : { " " | "\t" | "\n" | "\r" }
+
+TOKEN : {
+  < LESS: "<"> | < LE: "<=" > | < GREAT: ">" > | < GE: ">=" >
+| < EQ: "==" > | < NEQ: "!=" > | < IN: "=in" > | < NOTIN: "!in" >
+| < PLUS: "+" > | < MINUS: "-" > | < TIMES: "*" > | < DIV: "/" > | < MOD: "%" >
+| < AND: "&" > | < VBAR: "|" > | < NOT: "!" >
+| < ASSGN: ":=" >
+| < LRND: "(" > | < LSQU: "[" > | < RRND: ")" > | < RSQU: "]" >
+| < COMMA: "," > | < SCOL: ";" >
+| < TRUE: "#1" > | < FALSE: "#0" >
+| < RANGE: ".." >
+}
+
+TOKEN [IGNORE_CASE]: {
+  < DO:"DO"> | < WHILE:"WHILE"> | < FOR:"FOR">
+| < IF:"IF"> | < THEN:"THEN"> | < ELIF:"ELIF"> | < ELSE:"ELSE"> | < FI:"FI">
+| < FUNCTION:"FUNCTION"> | < RETURN:"RETURN"> | < END:"END">
+| < PRINT:"PRINT"> | < PRINTLN:"PRINTLN"> | < VAR:"VAR">
+}
+
+TOKEN : {
+  < #DIGIT: ["0"-"9"]>
+| < #LOWER: ["a"-"z"]>
+| < #UPPER: ["A"-"Z"]>
+| < #LETTER: ["a"-"z","A"-"Z"]>
+| < STRING: "\"" (~["\""])* "\"" >
+| < NUMBER: (<DIGIT>)+ >
+| < IDNUM:  "#" <LETTER>(<LETTER>|<DIGIT>)* >
+| < IDBOOL: "?" <LETTER>(<LETTER>|<DIGIT>)* >
+| < IDVEC:  "v_" (<LETTER>|<DIGIT>)+ >
+}
+
+SPECIAL_TOKEN : {
+  <COMMENT_SINGLE: "//" (~["\n","\r"])* ("\n"|"\r"|"\r\n")>
+}
+
+// ==================================================
+//                  PARSER BEGINS
+// ==================================================
+
+SimpleNode start() #void :
+{}
+{
+  // Return the constructed AST node
+  S() { return (SimpleNode) (jjtree.popNode()); }
+| < EOF > { throw new ParseException("End of File."); }
+}
+
+void S() #void :
+{}
+{
+  statement_LL1() ";"
+| LOOKAHEAD(identifier() ":=") assign_stat() ";"
+| expression() ";" 
+| boolean_call() ";"
+}
+
+// Helper productions marked #void to simplify the tree
+void statement_LL1() #void :
+{}
+{
+  var_decl()
+| fn_decl()
+| return_stat()
+| print_stat()
+| println_stat()
+| if_stat()
+| for_stat()
+| while_stat()
+}
+
+void statement() #void :
+{}
+{
+  statement_LL1()
+| LOOKAHEAD(2) fn_call()
+| assign_stat()
+}
+
+void body() #body :
+{}
+{ (statement() ";")* }
+
+void clause() #clause :
+{}
+{ (statement() ";")+ }
+
+//--------------------------- DECLARATIONS ------------------------------------------------
+
+// AST: Flattens the list so identifiers are direct children of var_decl
+void var_decl() #var_decl :
+{}
+{
+  <VAR> identifier() ("," identifier())*
+}
+
+// AST: Calls ident_list to create a nested node for functions
+void fn_decl() #fn_decl :
+{}
+{ <FUNCTION> identifier() "(" (ident_list())? ")" body() <END> }
+
+// AST: Explicit node for function parameter lists
+void ident_list() #ident_list :
+{}
+{ identifier() ("," identifier())* }
+
+
+//--------------------------- FUNCTION CALLS AND RETURNS ----------------------------------
+
+void fn_call() #fn_call :
+{}
+{
+  // Store token values in the AST nodes
+  <IDNUM> { jjtThis.jjtSetValue(token.image); } #idnum "(" (exp_list())? ")"
+| <IDVEC> { jjtThis.jjtSetValue(token.image); } #idvec "(" (exp_list())? ")"
+}
+
+void boolean_call() #boolean_call :
+{}
+{
+  <IDBOOL> { jjtThis.jjtSetValue(token.image); } #idbool "(" (exp_list())? ")"
+}
+
+void exp_list() #exp_list :
+{}
+{ expression() ("," expression())* }
+
+void condition_list() #condition_list :
+{}
+{ condition() ("," condition())* }
+
+void return_stat() #Return :
+{}
+{ <RETURN> returnval() }
+
+void returnval() #void :
+{}
+{ LOOKAHEAD(condition()) condition() | expression() }
+
+void print_stat() #Print :
+{}
+{ <PRINT> print_list() }
+
+void println_stat() #Print_ln :
+{}
+{ <PRINTLN> (print_list())? }
+
+void print_list() #void :
+{}
+{ printable() ("," printable())* }
+
+void printable() #void :
+{}
+{
+  expression()
+| <STRING> { 
+      // Strip quotes from string before storing
+      jjtThis.jjtSetValue(token.image.substring(1, token.image.length()-1)); 
+  } #string
+| <IDBOOL> { jjtThis.jjtSetValue(token.image); } #idbool
+}
+
+void assign_stat() #Assign :
+{}
+{
+  <IDNUM> { jjtThis.jjtSetValue(token.image); } #idnum ":=" expression()
+| <IDBOOL> { jjtThis.jjtSetValue(token.image); } #idbool ":=" condition()
+| <IDVEC> { jjtThis.jjtSetValue(token.image); } #idvec ":=" vec_const()
+}
+
+void if_stat() #If :
+{}
+{
+  <IF> condition() <THEN> clause()
+  (
+    <ELSE> clause() <FI> 
+  | <FI> #NULL     // AST: Inject NULL node if 'else' is missing
+  | if_recursion() // AST: Handle 'elif' as nested recursion
+  )*
+}
+
+void if_recursion() #If:
+{}
+{ <ELIF> condition() <THEN> clause() }
+
+void for_stat() #For :
+{}
+{
+  <FOR> <IDNUM> { jjtThis.jjtSetValue(token.image); } #idnum <IN> exp_list() <DO> body() <END>
+}
+
+void while_stat() #While :
+{}
+{ <WHILE> condition() <DO> body() <END> }
+
+
+//--------------------------- CONDITIONS ---------------------------------------------------
+
+void condition() #void :
+{}
+{ (and_clause() ("|" and_clause())* ) #or(>1) }
+
+void and_clause() #void :
+{}
+{ (not_clause() ("&" not_clause())* ) #and(>1) }
+
+void not_clause() #void :
+{}
+{
+  "!" not_clause() #not
+| LOOKAHEAD(expression() comparator()) comparison()
+| "(" condition() ")"
+| LOOKAHEAD(2) boolean_call()
+| bool_simple()
+}
+
+void comparison() #comparison :
+{}
+{ expression() comparator() expression() }
+
+// AST: Node-ify comparator tokens
+void comparator() #void :
+{}
+{
+  "<" #le | "<=" #leq | ">" #gre | ">=" #geq
+| "==" #eq | "!=" #neq | "=in" #in | "!in" #notin
+}
+
+
+//--------------------------- EXPRESSIONS ------------------------------------------------
+
+void expression() #void :
+{}
+{ sum() }
+
+// AST: N-ary sum node where children are tagged #pos or #neg
+void sum() #void:
+{}
+{
+    LOOKAHEAD(2) (("-" #neg product()) ( add_sub_term() )*) #sum      |
+    LOOKAHEAD(2) ("+" product() ( add_sub_term() )*) #sum(>1)         |
+    (product() ( add_sub_term() )*) #sum(>1)
+}
+
+void add_sub_term() #void :
+{}
+{
+      "+" product() #pos
+    | "-" product() #neg
+}
+
+void product() #void :
+{}
+{
+    unary()
+    (
+        "*" unary() #mul(2)
+      | "/" unary() #div(2)
+      | "%" unary() #mod(2)
+    )*
+}
+
+void unary() #void :
+{}
+{
+      "-" unary() #neg
+    | "+" unary() #pos
+    | term()
+}
+
+void term() #void :
+{}
+{
+  "(" expression() ")"
+| LOOKAHEAD(2) fn_call()
+| simple_term()
+}
+
+void simple_term() #void :
+{}
+{
+  <IDNUM> { jjtThis.jjtSetValue(token.image); } #idnum
+| <IDVEC> { jjtThis.jjtSetValue(token.image); } #idvec
+| <NUMBER> { jjtThis.jjtSetValue(token.image); } #number
+| vec_const()
+}
+
+void vec_const() #vec_const :
+{}
+{
+  LOOKAHEAD("[" expression()) "[" (exp_list())? "]"
+| "[" (condition_list())? "]"
+}
+
+void identifier() #void :
+{}
+{
+  <IDNUM> { jjtThis.jjtSetValue(token.image); } #idnum
+| <IDBOOL> { jjtThis.jjtSetValue(token.image); } #idbool
+| <IDVEC> { jjtThis.jjtSetValue(token.image); } #idvec
+}
+
+void bool_simple() #void :
+{}
+{
+  <IDBOOL> { jjtThis.jjtSetValue(token.image); } #idbool
+| <TRUE> #TRUE
+| <FALSE> #FALSE
+}
