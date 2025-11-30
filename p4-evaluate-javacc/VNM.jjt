@@ -1,0 +1,419 @@
+options {
+  IGNORE_CASE = false;
+  MULTI = true;
+  JJTREE_OUTPUT_DIRECTORY = "AST";
+  VISITOR = true;
+  VISITOR_EXCEPTION = "Exception";
+}
+
+PARSER_BEGIN(VNM)
+
+public class VNM {
+}
+
+PARSER_END(VNM)
+
+TOKEN_MGR_DECLS :
+{
+}
+
+/* ====================================================================
+ * LEXER RULES
+ * ==================================================================== */
+
+SKIP : {
+    " "
+  | "\t"
+  | "\n"
+  | "\r"
+}
+
+TOKEN : /* OPERATORS & SYMBOLS */
+{
+    < AND:    "&" >
+  | < ASSGN:  ":=" >
+  | < COMMA:  "," >
+  | < DIV:    "/" >
+  | < EQ:     "==" >
+  | < FALSE:  "#0" >
+  | < GE:     ">=" >
+  | < GREAT:  ">" >
+  | < IN:     "=in" >
+  | < LE:     "<=" >
+  | < LESS:   "<" >
+  | < LRND:   "(" >
+  | < LSQU:   "[" >
+  | < MINUS:  "-" >
+  | < NEQ:    "!=" >
+  | < NOT:    "!" >
+  | < NOTIN:  "!in" >
+  | < PLUS:   "+" >
+  | < RANGE:  ".." >
+  | < RRND:   ")" >
+  | < RSQU:   "]" >
+  | < SCOL:   ";" >
+  | < TIMES:  "*" >
+  | < TRUE:   "#1" >
+  | < VBAR:   "|" >
+}
+
+TOKEN [IGNORE_CASE] : /* KEYWORDS */
+{
+    < DO:       "DO" >
+  | < WHILE:    "WHILE" >
+  | < FOR:      "FOR" >
+  | < IF:       "IF" >
+  | < THEN:     "THEN" >
+  | < ELIF:     "ELIF" >
+  | < ELSE:     "ELSE" >
+  | < FI:       "FI" >
+  | < FUNCTION: "FUNCTION" >
+  | < RETURN:   "RETURN" >
+  | < END:      "END" >
+  | < PRINT:    "PRINT" >
+  | < PRINTLN:  "PRINTLN" >
+  | < VAR:      "VAR" >
+}
+
+TOKEN : /* LITERALS & IDENTIFIERS */
+{
+    < #DIGIT:  ["0"-"9"] >
+  | < #LOWER:  ["a"-"z"] >
+  | < #UPPER:  ["A"-"Z"] >
+  | < #LETTER: ["a"-"z","A"-"Z"] >
+
+  | < STRING:  "\"" (~["\""])* "\"" >
+  | < NUMBER:  (<DIGIT>)+ >
+  | < IDNUM:   "#" <LETTER>(<LETTER>|<DIGIT>)* >
+  | < IDBOOL:  "?" <LETTER>(<LETTER>|<DIGIT>)* >
+  | < IDVEC:   "v_" (<LETTER>|<DIGIT>)+ >
+}
+
+SPECIAL_TOKEN :
+{
+  < COMMENT_SINGLE: "//" (~["\n","\r"])* ("\n"|"\r"|"\r\n") >
+}
+
+/* ====================================================================
+ * PARSER RULES
+ * ==================================================================== */
+
+SimpleNode start() #void :
+{}
+{
+  S() { return (SimpleNode) (jjtree.popNode()); }
+  | <EOF> { throw new ParseException("End of File."); }
+}
+
+void S() #void :
+{}
+{
+    statement_LL1() ";"
+  | LOOKAHEAD(identifier() ":=") assign_stat() ";"
+  | expression() ";"
+  | boolean_call() ";"
+}
+
+void statement_LL1() #void :
+{}
+{
+    var_decl()
+  | fn_decl()
+  | return_stat()
+  | print_stat()
+  | println_stat()
+  | if_stat()
+  | for_stat()
+  | while_stat()
+}
+
+void statement() #void :
+{}
+{
+    statement_LL1()
+  | LOOKAHEAD(2) fn_call()
+  | assign_stat()
+}
+
+void body() :
+{}
+{
+  (statement() ";")*
+}
+
+void clause() :
+{}
+{
+  (statement() ";")+
+}
+
+void var_decl() #void :
+{}
+{
+  <VAR> var_list()
+}
+
+void var_list() #void :
+{}
+{
+  (identifier() ("," identifier())*) #var_decl
+}
+
+void fn_decl() :
+{}
+{
+  <FUNCTION> identifier() "(" (ident_list())? ")" body() <END>
+}
+
+void ident_list() :
+{}
+{
+  identifier() ("," identifier())*
+}
+
+void fn_call() :
+{}
+{
+    idnum() "(" (exp_list())? ")"
+  | idvec() "(" (exp_list())? ")"
+}
+
+void boolean_call() :
+{}
+{
+  idbool() "(" (exp_list())? ")"
+}
+
+void exp_list() :
+{}
+{
+  expression() ("," expression())*
+}
+
+// Explicit condition list for vector constants
+void condition_list() :
+{}
+{
+  condition() ("," condition())*
+}
+
+void return_stat() #Return :
+{}
+{
+  <RETURN> returnval()
+}
+
+void returnval() #void :
+{}
+{
+    LOOKAHEAD(condition()) condition()
+  | expression()
+}
+
+void print_stat() #Print :
+{}
+{
+  <PRINT> print_list()
+}
+
+void println_stat() #Print_ln :
+{}
+{
+  <PRINTLN> (print_list())?
+}
+
+void print_list() #void :
+{}
+{
+  (expression() | string() | idbool()) 
+  ("," (expression() | string() | idbool()))*
+}
+
+void assign_stat() #Assign :
+{}
+{
+    idnum() ":=" expression()
+  | idbool() ":=" condition()
+  | idvec() ":=" vec_const()
+}
+
+/* --- Control Flow --- */
+
+void if_stat() #If :
+{}
+{
+  <IF> condition() <THEN> clause() else_clause() <FI>
+}
+
+void else_clause() #void :
+{}
+{
+    (<ELIF> condition() <THEN> clause() else_clause()) #If
+  | <ELSE> clause()
+  | {} #NULL
+}
+
+void for_stat() #For :
+{}
+{
+  <FOR> idnum() <IN> exp_list() <DO> body() <END>
+}
+
+void while_stat() #While :
+{}
+{
+  <WHILE> condition() <DO> body() <END>
+}
+
+/* --- Logic & Conditions --- */
+
+void condition() #void :
+{}
+{
+  (and_clause() ("|" and_clause())*) #or(>1)
+}
+
+void and_clause() #void :
+{}
+{
+  (not_clause() ("&" not_clause())*) #and(>1)
+}
+
+void not_clause() #void :
+{}
+{
+    "!" not_clause() #not
+  | LOOKAHEAD(expression() comparator()) comparison() 
+  | "(" condition() ")"
+  | LOOKAHEAD(2) boolean_call()
+  | bool_simple()
+}
+
+void comparison() :
+{}
+{
+  expression() comparator() expression()
+}
+
+void comparator() #void :
+{}
+{
+    "<"   #le
+  | "<="  #leq
+  | ">"   #gre
+  | ">="  #geq
+  | "=="  #eq
+  | "!="  #neq
+  | "=in" #in
+  | "!in" #notin
+}
+
+/* --- Arithmetic --- */
+
+void expression() #void :
+{}
+{
+    ("+" product() (summand())*) #sum(>1)
+  | (neg() (summand())*) #sum
+  | (product() (summand())*) #sum(>1)
+}
+
+void neg() :
+{}
+{
+  "-" product()
+}
+
+void summand() #void :
+{}
+{
+    "+" product() #pos
+  | "-" product() #neg
+}
+
+void product() #void :
+{}
+{
+  term() moreterms()
+}
+
+void moreterms() #void :
+{}
+{
+    ("*" term()) #mul(2) moreterms()
+  | ("/" term()) #div(2) moreterms()
+  | ("%" term()) #mod(2) moreterms()
+  | {}
+}
+
+void term() #void :
+{}
+{
+    "(" expression() ")"
+  | LOOKAHEAD(2) fn_call()
+  | simple_term()
+}
+
+void simple_term() #void :
+{}
+{
+    idnum()
+  | idvec()
+  | number()
+  | vec_const()
+}
+
+void vec_const() :
+{}
+{
+    LOOKAHEAD("[" expression()) "[" (exp_list())? "]"
+  | "[" (condition_list())? "]"
+}
+
+/* --- Terminals & Wrappers --- */
+
+void identifier() #void :
+{}
+{
+    idnum()
+  | idbool()
+  | idvec()
+}
+
+void bool_simple() #void :
+{}
+{
+    idbool()
+  | <TRUE> #TRUE
+  | <FALSE> #FALSE
+}
+
+void idvec() :
+{ Token t; }
+{
+  (t = <IDVEC>) { jjtThis.jjtSetValue(t.image); }
+}
+
+void idnum() :
+{ Token t; }
+{
+  (t = <IDNUM>) { jjtThis.jjtSetValue(t.image); }
+}
+
+void idbool() :
+{ Token t; }
+{
+  (t = <IDBOOL>) { jjtThis.jjtSetValue(t.image); }
+}
+
+void number() :
+{ Token t; }
+{
+  (t = <NUMBER>) { jjtThis.jjtSetValue(t.image); }
+}
+
+void string() :
+{ Token t; }
+{
+  (t = <STRING>) { jjtThis.jjtSetValue(t.image); }
+}
